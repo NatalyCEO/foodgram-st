@@ -46,14 +46,6 @@ docker-compose exec backend python manage.py load_test_data
 
 ---
 
-## **Полезные ссылки**
-
-- **Интерфейс веб-приложения** → [http://localhost/](http://localhost/)
-- **Спецификация API** → [http://localhost/api/docs/](http://localhost/api/docs/)
-- **Панель администратора** → [http://localhost/admin/](http://localhost/admin/)
-
----
-
 ## **Технологии**
 - **Backend:** Django, Django REST Framework, PostgreSQL
 - **Frontend:** React
@@ -61,5 +53,5 @@ docker-compose exec backend python manage.py load_test_data
 
 ---
 
--**Статус проекта** в разработке
--**Автор проекта** Разживина Наталья
+**Статус проекта** в разработке
+**Автор проекта** Разживина Наталья
