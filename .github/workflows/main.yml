@@ -8,12 +8,56 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  BACKEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/infra-backend
-  FRONTEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/infra-frontend
+  BACKEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/foodgram-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/foodgram-frontend
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          cd backend
+          python manage.py test
+
+  lint-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run linting
+        run: |
+          cd frontend
+          npm run lint
+
   build-and-push:
+    needs: [test-backend, lint-frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -75,3 +119,20 @@ jobs:
           docker pull ${{ env.BACKEND_IMAGE }}:latest
           docker pull ${{ env.FRONTEND_IMAGE }}:latest
           echo "Images successfully built and pushed to Docker Hub"
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ${{ secrets.PROJECT_PATH }}
+            git pull
+            docker-compose -f docker-compose.prod.yml pull
+            docker-compose -f docker-compose.prod.yml up -d
+            docker system prune -f
