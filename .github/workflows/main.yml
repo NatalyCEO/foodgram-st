@@ -8,8 +8,8 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  BACKEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/foodgram-backend
-  FRONTEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/foodgram-frontend
+  BACKEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/infra-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/infra-frontend
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
