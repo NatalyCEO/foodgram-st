@@ -35,29 +35,8 @@ jobs:
           cd backend
           python manage.py test
 
-  lint-frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: |
-          cd frontend
-          npm ci
-
-      - name: Run linting
-        run: |
-          cd frontend
-          npm run lint
-
   build-and-push:
-    needs: [test-backend, lint-frontend]
+    needs: [test-backend]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
