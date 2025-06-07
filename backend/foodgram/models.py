@@ -153,6 +153,7 @@ class Recipe(TimeStampedModel):
         'Tag',
         verbose_name=_('Tags'),
         related_name='recipes',
+        blank=True
     )
     author = models.ForeignKey(
         User,

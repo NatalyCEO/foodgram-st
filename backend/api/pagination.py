@@ -8,10 +8,18 @@ class PageLimitPagination(PageNumberPagination):
     page_size_query_param = 'limit'
     max_page_size = 100
 
-    def get_pagination_response(self, data: Any) -> Response:
+    def get_paginated_response(self, data: Any) -> Response:
         return Response({
-            'count': self.page_paginator.count,
+            'count': self.page.paginator.count,
             'next': self.get_next_link(),
             'previous': self.get_previous_link(),
-            'result': data        
+            'results': data
         })
+
+    def paginate_queryset(self, queryset, request, view=None):
+        if 'limit' in request.query_params:
+            try:
+                self.page_size = int(request.query_params['limit'])
+            except (TypeError, ValueError):
+                pass
+        return super().paginate_queryset(queryset, request, view)
