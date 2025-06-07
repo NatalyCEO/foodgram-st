@@ -58,10 +58,6 @@ docker-compose exec backend python manage.py load_test_data
 
 1. `DOCKER_USERNAME` - имя пользователя на Docker Hub
 2. `DOCKER_PASSWORD` - пароль от Docker Hub
-3. `HOST` - IP-адрес сервера
-4. `USERNAME` - имя пользователя для SSH-подключения
-5. `SSH_KEY` - приватный SSH-ключ
-6. `PROJECT_PATH` - путь к проекту на сервере
 
 ### Как добавить секреты:
 
@@ -69,15 +65,6 @@ docker-compose exec backend python manage.py load_test_data
 2. Выберите "Secrets and variables" -> "Actions"
 3. Нажмите "New repository secret"
 4. Добавьте каждый секрет с соответствующим значением
-
-### Как получить SSH-ключ:
-
-1. На локальном компьютере выполните:
-   ```bash
-   cat ~/.ssh/id_rsa
-   ```
-2. Скопируйте вывод команды (включая строки BEGIN и END)
-3. Добавьте как секрет `SSH_KEY`
 
 ---
 
