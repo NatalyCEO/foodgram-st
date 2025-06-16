@@ -1,6 +1,6 @@
 from foodgram.models import (
     Ingredient, Recipe, RecipeIngredient,
-    Favorite, ShoppingCart, User, Subscription, Tag
+    Favorite, ShoppingCart, User, Subscription
 )
 from djoser.serializers import UserSerializer
 from django.core.exceptions import ValidationError
@@ -10,9 +10,23 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
 from drf_extra_fields.fields import Base64ImageField
 from typing import Any, Dict, List, Optional
+from foodgram.constants import (
+    RECIPE_NAME_MAX_LENGTH,
+    MIN_COOKING_TIME,
+    MIN_AMOUNT
+)
 
 
 User = get_user_model()
+
+
+class AvatarSerializer(serializers.Serializer):
+    avatar = Base64ImageField(required=True)
+
+    def validate_avatar(self, value):
+        if not value:
+            raise serializers.ValidationError(_('Avatar data is required'))
+        return value
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -86,59 +100,56 @@ class RecipeIngredientWriteSerializer(serializers.ModelSerializer):
         fields = ('id', 'amount')
 
 
+class RecipeIngredientReadSerializer(serializers.ModelSerializer):
+    id = serializers.ReadOnlyField(source='ingredient.id')
+    name = serializers.ReadOnlyField(source='ingredient.name')
+    measurement_unit = serializers.ReadOnlyField(source='ingredient.measurement_unit')
+    amount = serializers.IntegerField()
+
+    class Meta:
+        model = RecipeIngredient
+        fields = ('id', 'name', 'measurement_unit', 'amount')
+
+
 class RecipeSerializer(serializers.ModelSerializer):
     ingredients = RecipeIngredientWriteSerializer(many=True, write_only=True)
     author = UserProfileSerializer(read_only=True)
     is_favorited = serializers.SerializerMethodField()
     is_in_shopping_cart = serializers.SerializerMethodField()
-    image = Base64ImageField()
-    tags = serializers.PrimaryKeyRelatedField(
-        queryset=Tag.objects.all(),
-        many=True,
-        required=False,
-        write_only=True
-    )
-    name = serializers.CharField(max_length=200)
+    image = Base64ImageField(write_only=True)
+    image_url = serializers.SerializerMethodField(source='image', read_only=True)
+    name = serializers.CharField(max_length=RECIPE_NAME_MAX_LENGTH)
     text = serializers.CharField()
-    cooking_time = serializers.IntegerField(min_value=1)
+    cooking_time = serializers.IntegerField(min_value=MIN_COOKING_TIME)
 
     class Meta:
         model = Recipe
         fields = (
             'id', 'author', 'ingredients', 'is_favorited', 'is_in_shopping_cart',
-            'name', 'image', 'text', 'cooking_time', 'tags'
+            'name', 'image', 'image_url', 'text', 'cooking_time'
         )
         read_only_fields = ('id', 'author')
 
+    def get_image_url(self, obj):
+        if obj.image:
+            return obj.image.url
+        return ''
+
     def to_representation(self, instance):
-        data = {
-            'id': instance.id,
-            'author': UserProfileSerializer(instance.author, context=self.context).data,
-            'ingredients': [],
-            'is_favorited': self.get_is_favorited(instance),
-            'is_in_shopping_cart': self.get_is_in_shopping_cart(instance),
-            'name': instance.name,
-            'image': instance.image.url if instance.image else None,
-            'text': instance.text,
-            'cooking_time': instance.cooking_time
-        }
-        
-        for ri in instance.recipe_ingredients.select_related('ingredient').all():
-            data['ingredients'].append({
-                'id': ri.ingredient.id,
-                'name': ri.ingredient.name,
-                'measurement_unit': ri.ingredient.measurement_unit,
-                'amount': ri.amount
-            })
-            
+        data = super().to_representation(instance)
+        data['ingredients'] = RecipeIngredientReadSerializer(
+            instance.recipe_ingredients.all(),
+            many=True
+        ).data
+        # Rename image_url to image in the response
+        if 'image_url' in data:
+            data['image'] = data.pop('image_url')
         return data
 
     def create(self, validated_data):
         ingredients_data = validated_data.pop('ingredients')
-        tags_data = validated_data.pop('tags', None)
+        validated_data['author'] = self.context['request'].user
         recipe = Recipe.objects.create(**validated_data)
-        if tags_data is not None:
-            recipe.tags.set(tags_data)
         for ingredient_data in ingredients_data:
             RecipeIngredient.objects.create(
                 recipe=recipe,
@@ -149,7 +160,6 @@ class RecipeSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         ingredients_data = validated_data.pop('ingredients', None)
-        tags_data = validated_data.pop('tags', None)
         if ingredients_data is not None:
             instance.ingredients.clear()
             for ingredient_data in ingredients_data:
@@ -158,8 +168,6 @@ class RecipeSerializer(serializers.ModelSerializer):
                     ingredient=ingredient_data['id'],
                     amount=ingredient_data['amount']
                 )
-        if tags_data is not None:
-            instance.tags.set(tags_data)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
@@ -219,3 +227,86 @@ class SubscriptionRecipeSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         data['image'] = instance.image.url if instance.image else None
         return data
+
+
+class SubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Subscription
+        fields = ('user', 'author')
+        validators = [
+            UniqueTogetherValidator(
+                queryset=Subscription.objects.all(),
+                fields=('user', 'author'),
+                message=_("You are already subscribed to this user")
+            )
+        ]
+
+    def validate(self, data):
+        if data['user'] == data['author']:
+            raise serializers.ValidationError(
+                _("You cannot subscribe to yourself")
+            )
+        return data
+
+    def create(self, validated_data):
+        return Subscription.objects.create(**validated_data)
+
+    def delete(self, user, author):
+        try:
+            subscription = Subscription.objects.get(user=user, author=author)
+            subscription.delete()
+        except Subscription.DoesNotExist:
+            raise serializers.ValidationError(
+                _("You are not subscribed to this user")
+            )
+
+
+class RecipeCollectionSerializer(serializers.ModelSerializer):
+    class Meta:
+        fields = ('user', 'recipe')
+        validators = [
+            UniqueTogetherValidator(
+                message=_('Recipe is already in collection'),
+                fields=('user', 'recipe'),
+                queryset=Favorite.objects.all()
+            )
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        model = self.context.get('collection_model')
+        action = self.context.get('action')
+        if model:
+            self.Meta.model = model
+            if action == 'delete':
+                self.Meta.validators = []
+            else:
+                self.Meta.validators[0].queryset = model.objects.all()
+
+    def validate(self, data):
+        model = self.context.get('collection_model')
+        if not model:
+            raise serializers.ValidationError(
+                'collection_model is required in context'
+            )
+        return data
+
+    def delete(self, data):
+        model = self.context.get('collection_model')
+        if not model:
+            raise serializers.ValidationError(
+                'collection_model is required in context'
+            )
+        
+        obj = model.objects.filter(
+            user=data['user'],
+            recipe=data['recipe']
+        ).first()
+        
+        if not obj:
+            raise serializers.ValidationError(
+                _('Recipe is not in collection')
+            )
+            
+        obj.delete()
+        return True

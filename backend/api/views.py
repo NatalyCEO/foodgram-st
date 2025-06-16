@@ -8,7 +8,7 @@ from django.http import FileResponse, Http404, HttpResponse
 from django.utils.translation import gettext_lazy as _
 from rest_framework import (
     viewsets, status, permissions, serializers,
-    response, decorators
+    response, decorators, filters
 )
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -27,7 +27,10 @@ from api.serializers import (
     IngredientSerializer,
     RecipeSerializer,
     SubscriptionRecipeSerializer,
-    RecipesUserSerializer
+    RecipesUserSerializer,
+    AvatarSerializer,
+    SubscriptionSerializer,
+    RecipeCollectionSerializer
 )
 from api.pagination import PageLimitPagination
 from api.filters import RecipeFilter
@@ -41,12 +44,7 @@ class BaseModelViewSet(viewsets.ModelViewSet):
     pagination_class = PageLimitPagination
 
     def handle_error(self, error: Exception) -> Response:
-        if isinstance(error, ValidationError):
-            return Response(
-                {'error': str(error)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        if isinstance(error, serializers.ValidationError):
+        if isinstance(error, (ValidationError, serializers.ValidationError)):
             return Response(
                 {'error': str(error)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -69,14 +67,8 @@ class UserManagementViewSet(UserViewSet):
         permission_classes=[permissions.IsAuthenticated]
     )
     def me(self, request: Any) -> Response:
-        try:
-            serializer = self.get_serializer(request.user)
-            return Response(serializer.data)
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+        serializer = self.get_serializer(request.user)
+        return Response(serializer.data)
 
     @action(
         detail=False,
@@ -85,58 +77,21 @@ class UserManagementViewSet(UserViewSet):
         permission_classes=[permissions.IsAuthenticated]
     )
     def avatar(self, request: Any) -> Response:
-        try:
-            user = request.user
-            data = request.data.get('avatar')
-
-            if not data:
-                return Response(
-                    {'error': 'Avatar data is required'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                format, imgstr = data.split(';base64,')
-            except ValueError:
-                return Response(
-                    {'error': 'Invalid avatar format'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            ext = format.split('/')[-1]
-            if ext not in ['jpeg', 'jpg', 'png']:
-                return Response(
-                    {'error': 'Invalid file format. Only jpeg, jpg, and png are allowed'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            file = ContentFile(
-                base64.b64decode(imgstr),
-                name=f'avatar{user.id}.{ext}'
-            )
-            user.avatar = file
-            user.save()
-            return Response({'avatar': user.avatar.url})
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        serializer = AvatarSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        user.avatar = serializer.validated_data['avatar']
+        user.save()
+        return Response({'avatar': user.avatar.url})
 
     @avatar.mapping.delete
     def delete_avatar(self, request: Any) -> Response:
-        try:
-            user = request.user
-            if user.avatar:
-                user.avatar.delete(save=False)
-                user.avatar = None
-                user.save()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        user = request.user
+        if user.avatar:
+            user.avatar.delete(save=False)
+            user.avatar = None
+            user.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(
         detail=True,
@@ -145,65 +100,34 @@ class UserManagementViewSet(UserViewSet):
     )
     def subscribe(self, request: Any, id: Optional[int] = None) -> Response:
         author = get_object_or_404(User, id=id)
-        
-        try:
-            if request.user == author:
-                raise serializers.ValidationError(
-                    _("You cannot subscribe to yourself")
-                )
-            _, created = Subscription.objects.get_or_create(
-                user=request.user,
-                author=author
-            )
-            if not created:
-                raise serializers.ValidationError(
-                    _("You are already subscribed to this user")
-                )
-            
-            context = {'request': request}
-            return Response(
-                RecipesUserSerializer(
-                    author,
-                    context=context
-                ).data,
-                status=status.HTTP_201_CREATED
-            )
-        except serializers.ValidationError as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        serializer = SubscriptionSerializer(data={
+            'user': request.user.id,
+            'author': author.id
+        })
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            RecipesUserSerializer(
+                author,
+                context={'request': request}
+            ).data,
+            status=status.HTTP_201_CREATED
+        )
 
     @subscribe.mapping.delete
     def unsubscribe(self, request: Any, id: Optional[int] = None) -> Response:
+        author = get_object_or_404(User, pk=id)
+        serializer = SubscriptionSerializer(
+            data={'user': request.user.id, 'author': author.id}
+        )
         try:
-            author = get_object_or_404(User, pk=id)
-        except Http404:
-            return Response(
-                {'error': _('Author not found.')},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        try:
-            subscription = get_object_or_404(
-                Subscription,
-                user=request.user,
-                author=author
-            )
-            subscription.delete()
+            serializer.delete(request.user, author)
             return Response(status=status.HTTP_204_NO_CONTENT)
-        except Http404:
+        except serializers.ValidationError as e:
             return Response(
-                {'error': _('You are not subscribed to this author.')},
+                {'detail': e.detail},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            return self.handle_error(e)
 
     @action(
         detail=False,
@@ -240,9 +164,14 @@ class RecipeViewSet(BaseModelViewSet):
     pagination_class = PageLimitPagination
     filter_backends = (DjangoFilterBackend,)
     filterset_class = RecipeFilter
+    permission_classes = [IsOwnerOrReadOnly]
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [permissions.IsAuthenticated(), IsOwnerOrReadOnly()]
+        if self.action in ['shopping_cart', 'favorite'] or (
+            self.action in ['remove_favorite'] and self.request.method == 'DELETE'
+        ):
             return [permissions.IsAuthenticated()]
         return [permissions.AllowAny()]
 
@@ -250,82 +179,17 @@ class RecipeViewSet(BaseModelViewSet):
         queryset = Recipe.objects.all()
         return queryset.select_related('author').prefetch_related(
             'ingredients',
-            'tags',
             'recipe_ingredients',
             'recipe_ingredients__ingredient'
         )
 
-    def create(self, request, *args, **kwargs):
-        try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-        except serializers.ValidationError as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-    def update(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            
-            if instance.author != request.user:
-                return Response(
-                    {'detail': 'You do not have permission to update this recipe'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            serializer = self.get_serializer(instance, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
-            
-            instance = self.get_queryset().get(id=instance.id)
-            serializer = self.get_serializer(instance)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Http404:
-            return Response(
-                {'detail': 'Not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except serializers.ValidationError as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-    def perform_create(self, serializer: Any) -> None:
-        serializer.save(author=self.request.user)
-
-    def retrieve(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Http404:
-            return Response(
-                {'detail': 'Not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    def _handle_collection_action(self, model, request, pk, add):
+        if request.method == 'POST':
+            add = True
+        elif request.method == 'DELETE':
+            add = False
+        
+        return self.handle_recipe(model, request.user, pk, add)
 
     @staticmethod
     def handle_recipe(
@@ -334,47 +198,23 @@ class RecipeViewSet(BaseModelViewSet):
         recipe_id: int,
         add: bool = True
     ) -> Response:
-        try:
-            if not Recipe.objects.filter(pk=recipe_id).exists():
-                return Response(
-                    {'detail': 'Recipe not found.'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            recipe = Recipe.objects.get(pk=recipe_id)
+        recipe = get_object_or_404(Recipe, pk=recipe_id)
 
-            if add:
-                _, created = model.objects.get_or_create(
-                    user=user,
-                    recipe=recipe
-                )
-                if not created:
-                    raise serializers.ValidationError(
-                        _('Recipe is already in collection')
-                    )
-                return Response(
-                    SubscriptionRecipeSerializer(recipe).data,
-                    status=status.HTTP_201_CREATED
-                )
+        serializer = RecipeCollectionSerializer(
+            data={'user': user.id, 'recipe': recipe_id},
+            context={'collection_model': model, 'action': 'delete' if not add else None}
+        )
+        serializer.is_valid(raise_exception=True)
 
-            obj = model.objects.filter(user=user, recipe=recipe).first()
-            if not obj:
-                return Response(
-                    {'detail': 'Recipe not in collection.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            obj.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except serializers.ValidationError as e:
+        if add:
+            serializer.save()
             return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
+                SubscriptionRecipeSerializer(recipe).data,
+                status=status.HTTP_201_CREATED
             )
-        except Exception as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+
+        serializer.delete(serializer.validated_data)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(
         detail=True,
@@ -382,47 +222,19 @@ class RecipeViewSet(BaseModelViewSet):
         permission_classes=[IsAuthenticated]
     )
     def favorite(self, request: Any, pk: Optional[int] = None) -> Response:
-        if not request.user.is_authenticated:
-            return Response(
-                {'detail': 'Authentication credentials were not provided.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        return self.handle_recipe(Favorite, request.user, pk, True)
+        return self._handle_collection_action(Favorite, request, pk, add=True)
 
     @favorite.mapping.delete
     def remove_favorite(self, request: Any, pk: Optional[int] = None) -> Response:
-        if not request.user.is_authenticated:
-            return Response(
-                {'detail': 'Authentication credentials were not provided.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        return self.handle_recipe(Favorite, request.user, pk, False)
+        return self._handle_collection_action(Favorite, request, pk, add=False)
 
     @action(
         detail=True,
-        methods=['post'],
+        methods=['post', 'delete'],
         permission_classes=[IsAuthenticated]
     )
     def shopping_cart(self, request: Any, pk: Optional[int] = None) -> Response:
-        if not request.user.is_authenticated:
-            return Response(
-                {'detail': 'Authentication credentials were not provided.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        return self.handle_recipe(ShoppingCart, request.user, pk, True)
-
-    @shopping_cart.mapping.delete
-    def remove_shopping_cart(
-        self,
-        request: Any,
-        pk: Optional[int] = None
-    ) -> Response:
-        if not request.user.is_authenticated:
-            return Response(
-                {'detail': 'Authentication credentials were not provided.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        return self.handle_recipe(ShoppingCart, request.user, pk, False)
+        return self._handle_collection_action(ShoppingCart, request, pk, add=request.method == 'POST')
 
     @action(
         detail=False,
@@ -471,67 +283,24 @@ class RecipeViewSet(BaseModelViewSet):
             recipe = self.get_object()
             url = request.build_absolute_uri(f'/s/{recipe.pk}/')
             return Response({'short-link': url}, status=status.HTTP_200_OK)
-        except Http404:
-            return Response(
-                {'detail': 'Not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
         except Exception as e:
             return Response(
                 {'detail': str(e)},
                 status=status.HTTP_404_NOT_FOUND
-            )
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-
-    def destroy(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            if instance.author != request.user:
-                return Response(
-                    {'detail': 'You do not have permission to delete this recipe.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            self.perform_destroy(instance)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except Http404:
-            return Response(
-                {'detail': 'Not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
             )
 
 
 class IngredientViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Ingredient.objects.all()
+    queryset = Ingredient.objects.all().order_by('name')
     serializer_class = IngredientSerializer
     permission_classes = (permissions.AllowAny,)
     pagination_class = None
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['name']
 
-    def get_queryset(self) -> Any:
-        queryset = Ingredient.objects.all().order_by('name')
+    def get_queryset(self):
+        queryset = super().get_queryset()
         name = self.request.query_params.get('name')
         if name:
-            queryset = queryset.filter(name__icontains=name)
+            return queryset.filter(name__istartswith=name)
         return queryset
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data, status=status.HTTP_200_OK)

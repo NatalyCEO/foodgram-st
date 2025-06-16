@@ -1,4 +1,4 @@
-from foodgram.models import Recipe, RecipeIngredient, Favorite, ShoppingCart, Subscription, Tag
+from foodgram.models import Recipe, RecipeIngredient, Favorite, ShoppingCart, Subscription
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.core.files import File
@@ -12,29 +12,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         self.stdout.write('Starting to load test data...')
-        
-        self.stdout.write('Creating tags...')
-        breakfast_tag = Tag.objects.get_or_create(
-            name='Завтрак',
-            color='#E26C2D',
-            slug='breakfast'
-        )[0]
-        lunch_tag = Tag.objects.get_or_create(
-            name='Обед',
-            color='#49B64E',
-            slug='lunch'
-        )[0]
-        dinner_tag = Tag.objects.get_or_create(
-            name='Ужин',
-            color='#8775D2',
-            slug='dinner'
-        )[0]
-        dessert_tag = Tag.objects.get_or_create(
-            name='Десерт',
-            color='#FCC419',
-            slug='dessert'
-        )[0]
-        self.stdout.write(self.style.SUCCESS('Created tags'))
         
         admin = User.objects.create_superuser(
             username='admin',
@@ -71,7 +48,6 @@ class Command(BaseCommand):
             author=chef,
             cooking_time=30
         )
-        carbonara.tags.add(lunch_tag, dinner_tag)
         
         carbonara_image_path = os.path.join(settings.MEDIA_ROOT, 'recipes/images/carbonara.jpg')
         self.stdout.write(f'Looking for image at: {carbonara_image_path}')
@@ -90,8 +66,7 @@ class Command(BaseCommand):
             author=foodie,
             cooking_time=20
         )
-        caesar.tags.add(lunch_tag)
-        
+                
         caesar_image_path = os.path.join(settings.MEDIA_ROOT, 'recipes/images/caesar.jpg')
         self.stdout.write(f'Looking for image at: {caesar_image_path}')
         if os.path.exists(caesar_image_path):

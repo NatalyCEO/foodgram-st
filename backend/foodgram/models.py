@@ -6,6 +6,20 @@ from django.utils.timezone import now
 from django.core.exceptions import ValidationError
 from typing import Optional, List
 from django.utils.translation import gettext_lazy as _
+from .constants import (
+    USERNAME_MAX_LENGTH,
+    EMAIL_MAX_LENGTH,
+    FIRST_NAME_MAX_LENGTH,
+    LAST_NAME_MAX_LENGTH,
+    INGREDIENT_NAME_MAX_LENGTH,
+    MEASUREMENT_UNIT_MAX_LENGTH,
+    RECIPE_NAME_MAX_LENGTH,
+    MIN_COOKING_TIME,
+    MIN_AMOUNT,
+    NAME_REGEX,
+    NAME_VALIDATION_MSG,
+    MEASUREMENT_UNIT_VALIDATION_MSG
+)
 
 
 class TimeStampedModel(models.Model):
@@ -19,34 +33,34 @@ class TimeStampedModel(models.Model):
 class User(AbstractUser):
     username = models.CharField(
         _('Username'),
-        max_length=150,
+        max_length=USERNAME_MAX_LENGTH,
         unique=True,
         validators=[UnicodeUsernameValidator()],
         help_text=_('Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.')
     )
     email = models.EmailField(
         _('Email address'),
-        max_length=254,
+        max_length=EMAIL_MAX_LENGTH,
         unique=True,
         help_text=_('Required. Must be a valid email address.')
     )
     first_name = models.CharField(
         _('First name'),
-        max_length=150,
+        max_length=FIRST_NAME_MAX_LENGTH,
         validators=[
             RegexValidator(
-                regex=r'^[a-zA-Zа-яА-ЯёЁ\s-]+$',
-                message=_('First name can only contain letters, spaces and hyphens')
+                regex=NAME_REGEX,
+                message=_(NAME_VALIDATION_MSG)
             )
         ]
     )
     last_name = models.CharField(
         _('Last name'),
-        max_length=150,
+        max_length=LAST_NAME_MAX_LENGTH,
         validators=[
             RegexValidator(
-                regex=r'^[a-zA-Zа-яА-ЯёЁ\s-]+$',
-                message=_('Last name can only contain letters, spaces and hyphens')
+                regex=NAME_REGEX,
+                message=_(NAME_VALIDATION_MSG)
             )
         ]
     )
@@ -75,32 +89,25 @@ class User(AbstractUser):
     def __str__(self) -> str:
         return self.username
 
-    def clean(self) -> None:
-        super().clean()
-        if self.email:
-            self.email = self.email.lower()
-        if self.username:
-            self.username = self.username.lower()
-
 
 class Ingredient(TimeStampedModel):
     name = models.CharField(
-        max_length=128,
+        max_length=INGREDIENT_NAME_MAX_LENGTH,
         verbose_name=_('Name'),
         validators=[
             RegexValidator(
-                regex=r'^[a-zA-Zа-яА-ЯёЁ\s-]+$',
-                message=_('Name can only contain letters, spaces and hyphens')
+                regex=NAME_REGEX,
+                message=_(NAME_VALIDATION_MSG)
             )
         ]
     )
     measurement_unit = models.CharField(
-        max_length=64,
+        max_length=MEASUREMENT_UNIT_MAX_LENGTH,
         verbose_name=_('Measurement Unit'),
         validators=[
             RegexValidator(
-                regex=r'^[a-zA-Zа-яА-ЯёЁ\s-]+$',
-                message=_('Measurement unit can only contain letters, spaces and hyphens')
+                regex=NAME_REGEX,
+                message=_(MEASUREMENT_UNIT_VALIDATION_MSG)
             )
         ]
     )
@@ -119,23 +126,15 @@ class Ingredient(TimeStampedModel):
     def __str__(self) -> str:
         return f"{self.name} ({self.measurement_unit})"
 
-    def clean(self) -> None:
-        super().clean()
-        if self.name:
-            self.name = self.name.strip().lower()
-        if self.measurement_unit:
-            self.measurement_unit = self.measurement_unit.strip().lower()
-
-
 
 class Recipe(TimeStampedModel):
     name = models.CharField(
-        max_length=256,
+        max_length=RECIPE_NAME_MAX_LENGTH,
         verbose_name=_('Name'),
         validators=[
             RegexValidator(
-                regex=r'^[a-zA-Zа-яА-ЯёЁ\s-]+$',
-                message=_('Name can only contain letters, spaces and hyphens')
+                regex=NAME_REGEX,
+                message=_(NAME_VALIDATION_MSG)
             )
         ]
     )
@@ -149,12 +148,6 @@ class Recipe(TimeStampedModel):
         related_name='recipes',
         through='RecipeIngredient',
     )
-    tags = models.ManyToManyField(
-        'Tag',
-        verbose_name=_('Tags'),
-        related_name='recipes',
-        blank=True
-    )
     author = models.ForeignKey(
         User,
         verbose_name=_('Author'),
@@ -167,7 +160,7 @@ class Recipe(TimeStampedModel):
     )
     cooking_time = models.PositiveSmallIntegerField(
         verbose_name=_('Cooking Time (minutes)'),
-        validators=[MinValueValidator(1)],
+        validators=[MinValueValidator(MIN_COOKING_TIME)],
         help_text=_('Cooking time in minutes')
     )
     date_published = models.DateTimeField(
@@ -189,13 +182,6 @@ class Recipe(TimeStampedModel):
     def __str__(self) -> str:
         return self.name
 
-    def clean(self) -> None:
-        super().clean()
-        if self.name:
-            self.name = self.name.strip()
-        if self.text:
-            self.text = self.text.strip()
-
 
 class RecipeIngredient(models.Model):
     recipe = models.ForeignKey(
@@ -210,9 +196,9 @@ class RecipeIngredient(models.Model):
         related_name='ingredient_recipes',
         on_delete=models.CASCADE,
     )
-    amount = models.PositiveIntegerField(
+    amount = models.PositiveSmallIntegerField(
         verbose_name=_('Amount'),
-        validators=[MinValueValidator(1)],
+        validators=[MinValueValidator(MIN_AMOUNT)],
     )
 
     class Meta:
@@ -229,7 +215,24 @@ class RecipeIngredient(models.Model):
         return f'{self.amount} {self.ingredient.name} in {self.recipe.name}'
 
 
-class Favorite(TimeStampedModel):
+class RecipeCollection(TimeStampedModel):
+    user = models.ForeignKey(
+        User,
+        verbose_name=_('User'),
+        on_delete=models.CASCADE,
+    )
+    recipe = models.ForeignKey(
+        Recipe,
+        verbose_name=_('Recipe'),
+        on_delete=models.CASCADE,
+    )
+
+    class Meta:
+        abstract = True
+        ordering = ('-created_at',)
+
+
+class Favorite(RecipeCollection):
     user = models.ForeignKey(
         User,
         verbose_name=_('User'),
@@ -243,10 +246,9 @@ class Favorite(TimeStampedModel):
         on_delete=models.CASCADE,
     )
 
-    class Meta:
+    class Meta(RecipeCollection.Meta):
         verbose_name = _('Favorite')
         verbose_name_plural = _('Favorites')
-        ordering = ('-created_at',)
         constraints = [
             models.UniqueConstraint(
                 fields=['user', 'recipe'],
@@ -256,11 +258,6 @@ class Favorite(TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.user.username} has {self.recipe.name} in favorites'
-
-    def clean(self) -> None:
-        super().clean()
-        if self.user == self.recipe.author:
-            raise ValidationError(_('You cannot favorite your own recipe'))
 
 
 class Subscription(TimeStampedModel):
@@ -291,13 +288,8 @@ class Subscription(TimeStampedModel):
     def __str__(self) -> str:
         return f'{self.user.username} follows {self.author.username}'
 
-    def clean(self) -> None:
-        super().clean()
-        if self.user == self.author:
-            raise ValidationError(_('You cannot subscribe to yourself'))
 
-
-class ShoppingCart(TimeStampedModel):
+class ShoppingCart(RecipeCollection):
     user = models.ForeignKey(
         User,
         verbose_name=_('User'),
@@ -311,10 +303,9 @@ class ShoppingCart(TimeStampedModel):
         on_delete=models.CASCADE,
     )
 
-    class Meta:
+    class Meta(RecipeCollection.Meta):
         verbose_name = _('Shopping Cart')
         verbose_name_plural = _('Shopping Carts')
-        ordering = ('-created_at',)
         constraints = [
             models.UniqueConstraint(
                 fields=['user', 'recipe'],
@@ -324,47 +315,4 @@ class ShoppingCart(TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.user.username} has {self.recipe.name} in shopping cart'
-
-
-class Tag(models.Model):
-    name = models.CharField(
-        max_length=128,
-        verbose_name=_('Name'),
-        validators=[
-            RegexValidator(
-                regex=r'^[a-zA-Zа-яА-ЯёЁ\s-]+$',
-                message=_('Name can only contain letters, spaces and hyphens')
-            )
-        ]
-    )
-    color = models.CharField(
-        max_length=7,
-        verbose_name=_('Color'),
-        validators=[
-            RegexValidator(
-                regex=r'^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$',
-                message=_('Color must be a valid hex color code')
-            )
-        ]
-    )
-    slug = models.SlugField(
-        max_length=128,
-        unique=True,
-        verbose_name=_('Slug')
-    )
-
-    class Meta:
-        verbose_name = _('Tag')
-        verbose_name_plural = _('Tags')
-        ordering = ('name',)
-
-    def __str__(self) -> str:
-        return self.name
-
-    def clean(self) -> None:
-        super().clean()
-        if self.name:
-            self.name = self.name.strip().lower()
-        if self.slug:
-            self.slug = self.slug.strip().lower()
 

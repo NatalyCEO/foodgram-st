@@ -7,11 +7,10 @@ from django.db.models import QuerySet
 class RecipeFilter(filters.FilterSet):
     is_favorited = filters.BooleanFilter(method='filter_is_favorited')
     is_in_shopping_cart = filters.BooleanFilter(method='filter_is_in_shopping_cart')
-    author = filters.NumberFilter(field_name='author_id')
 
     class Meta:
         model = Recipe
-        fields = ('author','tags','is_favorited','is_in_shopping_cart')
+        fields = ('author','is_favorited','is_in_shopping_cart')
     
     def filter_is_favorited(
             self,
